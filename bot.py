@@ -746,7 +746,7 @@ async def cmd_arsiv_getir(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         rows = cur.fetchall()
 
     if not rows:
-        await update.message.reply_text("📁 Henüz materyal kaydın bulunmuyor.")
+        await update.message.reply_text("Henüz materyal kaydın bulunmuyor.")
         return
 
     satirlar = ["📁 <b>Materyal Arşivi</b>\n"]
@@ -771,7 +771,7 @@ async def cmd_verilerimi_sil(update: Update, context: ContextTypes.DEFAULT_TYPE)
         conn.commit()
 
     mesaj = (
-        "🗑️ <b>Verileriniz Başarıyla Silindi</b>\n\n"
+        "<b>Verileriniz Başarıyla Silindi</b>\n\n"
         "Kişisel Verilerin Korunması Kanunu (KVKK) uyumluluğu kapsamında, "
         "öğrenci asistanı botu veritabanında adınıza kayıtlı olan tüm not, "
         "devamsızlık ve materyal arşivi verileri sistemden <b>kalıcı olarak silinmiştir</b>."
