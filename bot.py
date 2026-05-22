@@ -1,68 +1,66 @@
 """
 Öğrenci Asistanı Telegram Botu
-================================
-Üniversite öğrencileri için devamsızlık, not, akademik takvim
-ve materyal arşivi takibi yapan asenkron Telegram botu.
-
-Gereksinimler:
-    pip install python-telegram-bot>=20.0
-
-Çalıştırma:
-    BOT_TOKEN ortam değişkenini ayarlayın, ardından:
-    python bot.py
+Gereksinimler: python-telegram-bot>=20.0, Python 3.10+
+Kurulum  : pip install python-telegram-bot
+Çalıştırma: BOT_TOKEN=<token> python bot.py
 """
 
-import os
 import logging
+import os
 import sqlite3
-from telegram import Update
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    ContextTypes,
-)
+import html
+import time
+import urllib.request
+import json
+import datetime
 
-# ──────────────────────────────────────────────
+from telegram import Update, BotCommand
+from telegram.ext import Application, CommandHandler, ContextTypes
+
+# ---------------------------------------------------------------------------
 # Logging Yapılandırması
-# ──────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────
-# Sabitler
-# ──────────────────────────────────────────────
-DB_NAME = "ogrenci_bot.db"
+# ---------------------------------------------------------------------------
+# Sabitler ve Önbellek Tanımları
+# ---------------------------------------------------------------------------
+DB_NAME = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ogrenci_bot.db")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# ──────────────────────────────────────────────
+# Canlı Duyuru Önbelleği (5 dakika - Sunucu yormama ve Spam Koruması)
+ANNOUNCEMENT_CACHE = None
+CACHE_TIMESTAMP = 0
+CACHE_DURATION_SECS = 300
+
+# ---------------------------------------------------------------------------
 # Veritabanı Kurulumu
-# ──────────────────────────────────────────────
+# ---------------------------------------------------------------------------
 
 def setup_database() -> None:
-    """
-    Uygulama başlatıldığında çağrılır.
-    Tablolar yoksa oluşturur; örnek takvim verilerini ekler.
-    """
+    """Gerekli tabloları oluşturur ve örnek takvim verilerini ekler."""
     with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
+        cur = conn.cursor()
 
-        # 1) attendance — Devamsızlık Tablosu
-        cursor.execute("""
+        # 1) Devamsızlık tablosu
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS attendance (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id     INTEGER NOT NULL,
-                course_name TEXT    NOT NULL,
-                absent_count INTEGER DEFAULT 0,
-                max_limit   INTEGER DEFAULT 4,
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                course_name  TEXT    NOT NULL,
+                absent_count INTEGER NOT NULL DEFAULT 0,
+                max_limit    INTEGER NOT NULL DEFAULT 4,
                 UNIQUE(user_id, course_name)
             )
         """)
 
-        # 2) grades — Not Tablosu
-        cursor.execute("""
+        # 2) Notlar tablosu
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS grades (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id     INTEGER NOT NULL,
@@ -73,450 +71,768 @@ def setup_database() -> None:
             )
         """)
 
-        # 3) materials — Materyal Arşivi
-        cursor.execute("""
+        # 3) Materyal arşivi tablosu
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS materials (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id     INTEGER NOT NULL,
-                course_name TEXT    NOT NULL,
-                link_or_text TEXT   NOT NULL
+                id           INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id      INTEGER NOT NULL,
+                course_name  TEXT    NOT NULL,
+                link_or_text TEXT    NOT NULL
             )
         """)
 
-        # 4) calendar — Akademik Takvim
-        cursor.execute("""
+        # 4) Akademik takvim tablosu
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS calendar (
                 id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                semester   TEXT NOT NULL,
-                emoji      TEXT NOT NULL DEFAULT '📌',
                 event_name TEXT NOT NULL,
                 event_date TEXT NOT NULL,
                 UNIQUE(event_name, event_date)
             )
         """)
 
-        # Kapsamlı akademik takvim verileri (KOÜ 2025-2026)
+        # Önceki takvim verilerini sıfırla (temiz ver kurulumu)
+        cur.execute("DELETE FROM calendar")
+
+        # Resmi Kocaeli Üniversitesi 2025-2026 Akademik Takvimi verileri
         sample_events = [
-            # ── 🍁 GÜZ YARIYILI ──
-            ("GÜZ YARIYILI (2025-2026)", "🍁", "Güz Dönemi Katkı Payı ve Harç Ücreti Ödemeleri Başlangıcı", "2025-09-08"),
-            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Kayıt Yenileme ve Derse Yazılma Başlangıcı", "2025-09-08"),
-            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Kayıt Yenileme ve Derse Yazılma Sonu", "2025-09-10"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Ders Ekleme/Bırakma ve Danışman Onayları Başlangıcı", "2025-09-11"),
-            ("GÜZ YARIYILI (2025-2026)", "🏫", "Güz Dönemi Derslerin Başlangıcı", "2025-09-15"),
-            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Ders Ekleme/Bırakma ve Danışman Onayları Sonu", "2025-09-19"),
-            ("GÜZ YARIYILI (2025-2026)", "🇹🇷", "Cumhuriyet Bayramı (Resmi Tatil - 1.5 Gün)", "2025-10-29"),
-            ("GÜZ YARIYILI (2025-2026)", "🎗️", "Atatürk'ü Anma Günü Törenleri", "2025-11-10"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Ara Sınavları (Vizeler) Başlangıcı", "2025-11-17"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Ara Sınavları (Vizeler) Sonu", "2025-11-21"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Mazeret Sınavları Başlangıcı", "2025-12-22"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Mazeret Sınavları Sonu", "2025-12-26"),
-            ("GÜZ YARIYILI (2025-2026)", "🎉", "Yılbaşı Tatili (Resmi Tatil - 1 Gün)", "2026-01-01"),
-            ("GÜZ YARIYILI (2025-2026)", "🏫", "Güz Dönemi Derslerinin Sonu", "2026-01-02"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Yarıyıl Sonu Sınavları (Finaller) Başlangıcı", "2026-01-05"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Yarıyıl Sonu Sınavları (Finaller) Sonu", "2026-01-16"),
-            ("GÜZ YARIYILI (2025-2026)", "💾", "Güz Dönemi Not Girişlerinin Son Günü (ÖBS Sürümü)", "2026-01-20"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Bütünleme Sınavları Başlangıcı", "2026-01-26"),
-            ("GÜZ YARIYILI (2025-2026)", "💼", "Bahar Dönemi Yatay Geçiş Başvurularının Başlaması", "2026-01-26"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Bütünleme Sınavları Sonu", "2026-01-30"),
-            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Tek Ders Sınavı", "2026-02-05"),
-            # ── 🌸 BAHAR YARIYILI ──
-            ("BAHAR YARIYILI (2025-2026)", "🌸", "Bahar Dönemi Kayıt Yenileme, Harç Yatırma ve Derse Yazılma Başlangıcı", "2026-02-09"),
-            ("BAHAR YARIYILI (2025-2026)", "🎓", "Bahar Dönemi Kayıt Yenileme ve Derse Yazılma Sonu", "2026-02-11"),
-            ("BAHAR YARIYILI (2025-2026)", "🏫", "Bahar Dönemi Derslerin Başlangıcı", "2026-02-16"),
-            ("BAHAR YARIYILI (2025-2026)", "🌙", "Ramazan Bayramı Tatili (Resmi Tatil - 3.5 Gün)", "2026-03-20"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Ara Sınavları (Vizeler) Başlangıcı", "2026-04-13"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Ara Sınavları (Vizeler) Sonu", "2026-04-17"),
-            ("BAHAR YARIYILI (2025-2026)", "🇹🇷", "Ulusal Egemenlik ve Çocuk Bayramı (Resmi Tatil)", "2026-04-23"),
-            ("BAHAR YARIYILI (2025-2026)", "👷", "Emek ve Dayanışma Günü (Resmi Tatil)", "2026-05-01"),
-            ("BAHAR YARIYILI (2025-2026)", "🇹🇷", "Atatürk'ü Anma, Gençlik ve Spor Bayramı (Resmi Tatil)", "2026-05-19"),
-            ("BAHAR YARIYILI (2025-2026)", "🐏", "Kurban Bayramı Tatili (Resmi Tatil - 4.5 Gün)", "2026-05-27"),
-            ("BAHAR YARIYILI (2025-2026)", "🏫", "Bahar Dönemi Derslerinin Sonu", "2026-06-12"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Başlangıcı", "2026-06-15"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Sonu", "2026-06-24"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Bütünleme Sınavları Başlangıcı", "2026-07-02"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Bütünleme Sınavları Sonu", "2026-07-08"),
-            ("BAHAR YARIYILI (2025-2026)", "🇹🇷", "Demokrasi ve Milli Birlik Günü (Resmi Tatil)", "2026-07-15"),
-            ("BAHAR YARIYILI (2025-2026)", "🎓", "Bahar Dönemi Tek Ders Sınavı", "2026-07-15"),
-            # ── ☀️ YAZ OKULU DÖNEMİ ──
-            ("YAZ OKULU DÖNEMİ (2026)", "☀️", "Yaz Okulu Başvuruları ve Derse Yazılma Kayıtları Başlangıcı", "2026-07-20"),
-            ("YAZ OKULU DÖNEMİ (2026)", "🏫", "Yaz Okulu Derslerinin Başlangıcı", "2026-07-27"),
+            ("🍁 Güz Dönemi Katkı Payı ve Harç Ücreti Ödemeleri Başlangıcı", "2025-09-08"),
+            ("🎓 Güz Dönemi Kayıt Yenileme ve Derse Yazılma Başlangıcı", "2025-09-08"),
+            ("🎓 Güz Dönemi Kayıt Yenileme ve Derse Yazılma Sonu", "2025-09-10"),
+            ("📝 Güz Dönemi Ders Ekleme/Bırakma ve Danışman Onayları Başlangıcı", "2025-09-11"),
+            ("🏫 Güz Dönemi Derslerin Başlangıcı", "2025-09-15"),
+            ("🎓 Güz Dönemi Ders Ekleme/Bırakma ve Danışman Onayları Sonu", "2025-09-19"),
+            ("🇹🇷 Cumhuriyet Bayramı (Resmi Tatil - 1.5 Gün)", "2025-10-29"),
+            ("🎗️ Atatürk'ü Anma Günü Törenleri", "2025-11-10"),
+            ("📝 Güz Dönemi Ara Sınavları (Vizeler) Başlangıcı", "2025-11-17"),
+            ("📝 Güz Dönemi Ara Sınavları (Vizeler) Sonu", "2025-11-21"),
+            ("📝 Güz Dönemi Mazeret Sınavları Başlangıcı", "2025-12-22"),
+            ("📝 Güz Dönemi Mazeret Sınavları Sonu", "2025-12-26"),
+            ("🎉 Yılbaşı Tatili (Resmi Tatil - 1 Gün)", "2026-01-01"),
+            ("🏫 Güz Dönemi Derslerinin Sonu", "2026-01-02"),
+            ("📝 Güz Dönemi Yarıyıl Sonu Sınavları (Finaller) Başlangıcı", "2026-01-05"),
+            ("📝 Güz Dönemi Yarıyıl Sonu Sınavları (Finaller) Sonu", "2026-01-16"),
+            ("💾 Güz Dönemi Not Girişlerinin Son Günü (ÖBS Sürümü)", "2026-01-20"),
+            ("📝 Güz Dönemi Bütünleme Sınavları Başlangıcı", "2026-01-26"),
+            ("📝 Güz Dönemi Bütünleme Sınavları Sonu", "2026-01-30"),
+            ("💼 Bahar Dönemi Yatay Geçiş Başvurularının Başlaması", "2026-01-26"),
+            ("🎓 Güz Dönemi Tek Ders Sınavı", "2026-02-05"),
+            ("🌸 Bahar Dönemi Kayıt Yenileme, Harç Yatırma ve Derse Yazılma Başlangıcı", "2026-02-09"),
+            ("🎓 Bahar Dönemi Kayıt Yenileme ve Derse Yazılma Sonu", "2026-02-11"),
+            ("🏫 Bahar Dönemi Derslerin Başlangıcı", "2026-02-16"),
+            ("🌙 Ramazan Bayramı Tatili (Resmi Tatil - 3.5 Gün)", "2026-03-20"),
+            ("📝 Bahar Dönemi Ara Sınavları (Vizeler) Başlangıcı", "2026-04-13"),
+            ("📝 Bahar Dönemi Ara Sınavları (Vizeler) Sonu", "2026-04-17"),
+            ("🇹🇷 Ulusal Egemenlik ve Çocuk Bayramı (Resmi Tatil)", "2026-04-23"),
+            ("👷 Emek ve Dayanışma Günü (Resmi Tatil)", "2026-05-01"),
+            ("🇹🇷 Atatürk'ü Anma, Gençlik ve Spor Bayramı (Resmi Tatil)", "2026-05-19"),
+            ("🐏 Kurban Bayramı Tatili (Resmi Tatil - 4.5 Gün)", "2026-05-27"),
+            ("🏫 Bahar Dönemi Derslerinin Sonu", "2026-06-12"),
+            ("📝 Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Başlangıcı", "2026-06-15"),
+            ("📝 Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Sonu", "2026-06-24"),
+            ("📝 Bahar Dönemi Bütünleme Sınavları Başlangıcı", "2026-07-02"),
+            ("📝 Bahar Dönemi Bütünleme Sınavları Sonu", "2026-07-08"),
+            ("🇹🇷 Demokrasi ve Milli Birlik Günü (Resmi Tatil)", "2026-07-15"),
+            ("🎓 Bahar Dönemi Tek Ders Sınavı", "2026-07-15"),
+            ("☀️ Yaz Okulu Başvuruları ve Derse Yazılma Kayıtları Başlangıcı", "2026-07-20"),
+            ("🏫 Yaz Okulu Derslerinin Başlangıcı", "2026-07-27"),
         ]
-        cursor.executemany(
-            "INSERT OR IGNORE INTO calendar (semester, emoji, event_name, event_date) VALUES (?, ?, ?, ?)",
+        
+        cur.executemany(
+            "INSERT OR IGNORE INTO calendar (event_name, event_date) VALUES (?, ?)",
             sample_events,
+        )
+
+        conn.commit()
+    logger.info("Veritabanı kurulumu tamamlandı: %s", DB_NAME)
+
+
+# ---------------------------------------------------------------------------
+# Yardımcı Tarih ve Canlı API Fonksiyonları
+# ---------------------------------------------------------------------------
+
+def format_date_tr(date_str: str) -> str:
+    """YYYY-MM-DD formatındaki tarihi 'D Ay YYYY, Gün' formatına çevirir."""
+    try:
+        dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+        months = ["", "Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+        weekdays = ["Pazartesi", "Salı", "Çarşamba", "Perşembe", "Cuma", "Cumartesi", "Pazar"]
+        return f"{dt.day} {months[dt.month]} {dt.year}, {weekdays[dt.weekday()]}"
+    except Exception:
+        return date_str
+
+
+def fetch_live_announcements() -> list | None:
+    """Kocaeli Üniversitesi BSM resmi API'sinden güncel son 20 duyuruyu çeker (5 dakika önbellekli)."""
+    global ANNOUNCEMENT_CACHE, CACHE_TIMESTAMP
+    
+    now = time.time()
+    if ANNOUNCEMENT_CACHE is not None and (now - CACHE_TIMESTAMP) < CACHE_DURATION_SECS:
+        logger.info("Duyurular önbellekten (cache) servis ediliyor.")
+        return ANNOUNCEMENT_CACHE
+
+    url = "https://api.kocaeli.edu.tr/api/Announcement/GetAll"
+    req = urllib.request.Request(
+        url,
+        headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+            'code': '1061'  # Kocaeli Üniversitesi BSM Bölüm Kodu
+        }
+    )
+    
+    try:
+        logger.info("Canlı duyurular KOÜ API sunucusundan talep ediliyor...")
+        with urllib.request.urlopen(req, timeout=10) as response:
+            data = json.loads(response.read().decode('utf-8'))
+        
+        all_items = []
+        if data.get('success') and isinstance(data.get('data'), list):
+            for item in data['data']:
+                ann = item.get('announcement')
+                if not ann or not ann.get('title') or not ann.get('startDate'):
+                    continue
+                
+                title = ann['title'].strip()
+                
+                # Tarih ayrıştırma: "2026-05-18T10:00:00" -> "18.05.2026"
+                try:
+                    date_part = ann['startDate'].split('T')[0]
+                    parts = date_part.split('-')
+                    formatted_date = f"{parts[2]}.{parts[1]}.{parts[0]}"
+                except Exception:
+                    formatted_date = "-"
+
+                seo_url = item.get('seoUrl', '').strip()
+                # Güvenli URL doğrulama
+                if seo_url and '/' not in seo_url and '\\' not in seo_url:
+                    link = f"https://bilisim.kocaeli.edu.tr/tr/duyurular/{seo_url}"
+                else:
+                    link = "https://bilisim.kocaeli.edu.tr/tr/duyurular"
+
+                all_items.append({
+                    'title': title,
+                    'date': formatted_date,
+                    'link': link
+                })
+            
+            # Tarih sıralaması API tarafından doğru döner, son 20 duyuruyu önbelleğe alıp döneriz
+            ANNOUNCEMENT_CACHE = all_items[:20]
+            CACHE_TIMESTAMP = now
+            return ANNOUNCEMENT_CACHE
+        else:
+            logger.warning("Resmi API geçersiz veya başarısız veri döndürdü.")
+            return None
+    except Exception as e:
+        logger.error("Canlı duyuru sorgusunda beklenmedik hata: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Komut İşleyicileri
+# ---------------------------------------------------------------------------
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/start — Kullanıcıyı karşılar ve komutları listeler."""
+    kullanici = html.escape(update.effective_user.first_name or "Öğrenci")
+    mesaj = (
+        f"👋 Merhaba, <b>{kullanici}</b>! Ben Öğrenci Asistanı Botuyum.\n\n"
+        "Kullanabileceğin komutlar:\n\n"
+        "📅 <b>Akademik Takvim</b>\n"
+        "  /takvim — Akademik etkinlikleri listeler.\n\n"
+        "📢 <b>Canlı Duyurular</b>\n"
+        "  /duyurular — Son 20 canlı BSM duyurusunu listeler.\n\n"
+        "📋 <b>Devamsızlık</b>\n"
+        "  /devamsizlik_ekle [Ders Adı] — Devamsızlık ekler.\n"
+        "  /devamsizlik_sil [Ders Adı] — Devamsızlık sayısını 1 azaltır.\n"
+        "  /devamsizlik_durum — Devamsızlık durumunu gösterir.\n\n"
+        "📝 <b>Notlar</b>\n"
+        "  /not_ekle [Ders Adı] [Vize] [Final] — Not ekler/günceller.\n"
+        "  /not_durum — Notları ve geçme durumunu gösterir.\n\n"
+        "📁 <b>Materyal Arşivi</b>\n"
+        "  /arsiv_ekle [Ders Adı] [Link/İçerik] — Materyal kaydeder.\n"
+        "  /arsiv_getir — Kayıtlı materyalleri listeler.\n\n"
+        "🗑️ <b>Veri Yönetimi (KVKK)</b>\n"
+        "  /verilerimi_sil — Sistemdeki tüm kayıtlı verilerinizi kalıcı olarak siler."
+    )
+    await update.message.reply_text(mesaj, parse_mode="HTML")
+
+
+async def cmd_takvim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/takvim — Akademik takvimi 3 ayrı mesajda, çift satırlı ve L girintili listeler."""
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT event_name, event_date FROM calendar ORDER BY event_date ASC")
+        rows = cur.fetchall()
+
+    if not rows:
+        await update.message.reply_text("📅 Takvimde henüz etkinlik bulunmuyor.")
+        return
+
+    guz_events = []
+    bahar_events = []
+    yaz_events = []
+
+    for event_name, event_date in rows:
+        formatted_date = format_date_tr(event_date)
+        try:
+            dt = datetime.datetime.strptime(event_date, "%Y-%m-%d")
+            # Çift satırlı ve L girintili premium düzen
+            event_line = f"• {formatted_date}\n  L {event_name}"
+            
+            if dt < datetime.datetime(2026, 2, 6):
+                guz_events.append(event_line)
+            elif dt < datetime.datetime(2026, 7, 16):
+                bahar_events.append(event_line)
+            else:
+                yaz_events.append(event_line)
+        except Exception:
+            guz_events.append(f"• {event_date}\n  L {event_name}")
+
+    # Her dönemi tam ekran görüntüsündeki gibi 3 AYRI MESAJ balonunda gönderiyoruz!
+    if guz_events:
+        guz_msg = "🍁 <b>GÜZ YARIYILI (2025-2026)</b>\n\n" + "\n\n".join(guz_events)
+        await update.message.reply_text(guz_msg, parse_mode="HTML")
+    
+    if bahar_events:
+        bahar_msg = "🌸 <b>BAHAR YARIYILI (2025-2026)</b>\n\n" + "\n\n".join(bahar_events)
+        await update.message.reply_text(bahar_msg, parse_mode="HTML")
+        
+    if yaz_events:
+        yaz_msg = "☀️ <b>YAZ OKULU DÖNEMİ (2026)</b>\n\n" + "\n\n".join(yaz_events)
+        await update.message.reply_text(yaz_msg, parse_mode="HTML")
+
+
+async def cmd_duyurular(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/duyurular — KOÜ BSM resmi sitesindeki güncel son 20 duyuruyu listeler."""
+    await update.message.reply_chat_action("typing")
+    
+    duyurular = fetch_live_announcements()
+    
+    if duyurular is None:
+        await update.message.reply_text(
+            "⚠️ <b>Hata:</b> Kocaeli Üniversitesi duyuru sistemine şu an erişilemiyor.\n"
+            "Lütfen birkaç dakika sonra tekrar deneyin.",
+            parse_mode="HTML"
+        )
+        return
+
+    if not duyurular:
+        await update.message.reply_text(
+            "📢 Bölüme ait güncel bir duyuru bulunamadı.",
+            parse_mode="HTML"
+        )
+        return
+
+    satirlar = ["📢 <b>KOÜ BSM Güncel Duyuruları</b>\n"]
+    for i, item in enumerate(duyurular, start=1):
+        esc_title = html.escape(item['title'])
+        esc_date = html.escape(item['date'])
+        esc_link = html.escape(item['link'])
+        
+        # Şık hiperlink formatı
+        satirlar.append(f"{i}. 📅 {esc_date} — <a href=\"{esc_link}\"><b>{esc_title}</b></a>")
+
+    full_message = "\n\n".join(satirlar)
+    
+    # Telegram mesaj uzunluğu sınırı kontrolü (maks 4096 karakter)
+    if len(full_message) > 4000:
+        satirlar = satirlar[:15]
+        satirlar.append("\n⚠️ <i>Karakter sınırı nedeniyle kalan duyurular listelenemedi.</i>")
+        full_message = "\n\n".join(satirlar)
+
+    await update.message.reply_text(
+        full_message, 
+        parse_mode="HTML",
+        disable_web_page_preview=True  # Link önizleme balonlarını kapatarak temiz bir akış sunar
+    )
+
+
+def get_canonical_course(course_name: str) -> tuple[str, int] | None:
+    """Ders adına göre standart (canonical) ismi ve devamsızlık limitini döndürür. Listede yoksa None döner."""
+    normalized = course_name.lower().strip()
+    
+    if normalized in ["fizik"]:
+        return "Fizik", 999
+    elif normalized in ["matematik 2", "matematik"]:
+        return "Matematik 2", 4
+    elif normalized in ["laboratuvar", "laboratuvar dersi", "lab"]:
+        return "Laboratuvar", 3
+    elif normalized in ["lineer cebir", "linner cebir", "cebir", "linner cebir dersi"]:
+        return "Linner Cebir", 999
+    elif normalized in ["türkçe", "turkce", "türkçe dersi"]:
+        return "Türkçe", 999
+    elif normalized in ["tarih", "tarih dersi", "inkılap tarihi", "ata"]:
+        return "Tarih", 999
+    elif normalized in ["ingilizce", "ingilizce dersi", "english"]:
+        return "İngilizce", 999
+    elif normalized in ["algoritma", "algoritma dersi", "algoritmalar"]:
+        return "Algoritma", 999
+    else:
+        return None
+
+
+async def cmd_devamsizlik_ekle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/devamsizlik_ekle [Ders Adı] — Devamsızlık sayacını 1 artırır."""
+    if not context.args:
+        # Kullanıcı argümansız çağırdığında derslerin isimlerini ve limitlerini listeler
+        mesaj = (
+            "<b>Kullanım:</b> <code>/devamsizlik_ekle [Ders Adı]</code>\n"
+            "Örnek: <code>/devamsizlik_ekle Matematik 2</code>\n\n"
+            "<b>Ders Listesi ve Devamsızlık Limitleri:</b>\n"
+            "• <b>Matematik 2</b> — Limit: 4 Hak\n"
+            "• <b>Laboratuvar</b> — Limit: 3 Hak\n"
+            "• <b>Fizik</b> — Sınırsız (Hoca bakmıyor)\n"
+            "• <b>Linner Cebir</b> — Sınırsız (Hoca bakmıyor)\n"
+            "• <b>Türkçe</b> — Sınırsız (Hoca bakmıyor)\n"
+            "• <b>Tarih</b> — Sınırsız (Hoca bakmıyor)\n"
+            "• <b>İngilizce</b> — Sınırsız (Hoca bakmıyor)\n"
+            "• <b>Algoritma</b> — Sınırsız (Hoca bakmıyor)\n"
+        )
+        await update.message.reply_text(mesaj, parse_mode="HTML")
+        return
+
+    course_name = " ".join(context.args).strip()
+
+    # Giriş Uzunluğu Kontrolü (Buffer Overflow ve DB DoS Koruması)
+    if len(course_name) > 50:
+        await update.message.reply_text(
+            "Ders adı en fazla 50 karakter uzunluğunda olabilir.",
+            parse_mode="HTML"
+        )
+        return
+
+    canonical_info = get_canonical_course(course_name)
+    if not canonical_info:
+        mesaj = (
+            f"<b>Hata:</b> Girdiğiniz ders adı (<code>{html.escape(course_name)}</code>) geçerli ders listesinde bulunamadı.\n"
+            "Lütfen girdiğiniz adı listedekilerden biri olacak şekilde kontrol edip tekrar deneyin.\n\n"
+            "<b>Geçerli Dersler:</b>\n"
+            "• Matematik 2\n"
+            "• Laboratuvar\n"
+            "• Fizik\n"
+            "• Linner Cebir\n"
+            "• Türkçe\n"
+            "• Tarih\n"
+            "• İngilizce\n"
+            "• Algoritma"
+        )
+        await update.message.reply_text(mesaj, parse_mode="HTML")
+        return
+
+    canonical_name, limit = canonical_info
+    user_id = update.effective_user.id
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+
+        # Ders yoksa oluştur (1 devamsızlık), varsa sayacı artır ve limiti güncelle
+        cur.execute("""
+            INSERT INTO attendance (user_id, course_name, absent_count, max_limit)
+            VALUES (?, ?, 1, ?)
+            ON CONFLICT(user_id, course_name)
+            DO UPDATE SET absent_count = absent_count + 1, max_limit = ?
+        """, (user_id, canonical_name, limit, limit))
+
+        # Güncel durumu oku
+        cur.execute(
+            "SELECT absent_count, max_limit FROM attendance WHERE user_id=? AND course_name=?",
+            (user_id, canonical_name),
+        )
+        absent_count, max_limit = cur.fetchone()
+        conn.commit()
+
+    esc_course = html.escape(canonical_name)
+    
+    if max_limit >= 999:
+        mesaj = (
+            f"<b>{esc_course}</b> dersi devamsızlığın güncellendi.\n"
+            f"Mevcut: {absent_count} / Sınırsız (Hoca bakmıyor)"
+        )
+    else:
+        mesaj = (
+            f"<b>{esc_course}</b> dersi devamsızlığın güncellendi.\n"
+            f"Mevcut: {absent_count} / {max_limit}"
+        )
+        if absent_count >= max_limit:
+            mesaj += (
+                f"\n\n<b>DİKKAT</b> Bu ders için devamsızlık sınırını "
+                f"({max_limit}) aştın veya sınırdasın."
+            )
+
+    await update.message.reply_text(mesaj, parse_mode="HTML")
+
+
+async def cmd_devamsizlik_durum(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/devamsizlik_durum — Tüm devamsızlıkları listeler."""
+    user_id = update.effective_user.id
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT course_name, absent_count, max_limit FROM attendance WHERE user_id=? ORDER BY course_name",
+            (user_id,),
+        )
+        rows = cur.fetchall()
+
+    if not rows:
+        await update.message.reply_text("Henüz devamsızlık kaydın bulunmuyor.")
+        return
+
+    satirlar = ["<b>Devamsızlık Durumu</b>\n"]
+    for course_name, absent_count, max_limit in rows:
+        esc_course = html.escape(course_name)
+        if max_limit >= 999:
+            satirlar.append(f"• <b>{esc_course}</b>: {absent_count} / Sınırsız (Hoca bakmıyor)")
+        else:
+            durum = " (Sınırda)" if absent_count >= max_limit else ""
+            satirlar.append(f"• <b>{esc_course}</b>: {absent_count} / {max_limit}{durum}")
+
+    await update.message.reply_text("\n".join(satirlar), parse_mode="HTML")
+
+
+async def cmd_devamsizlik_sil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/devamsizlik_sil [Ders Adı] — Belirtilen dersin devamsızlık sayısını 1 azaltır."""
+    if not context.args:
+        # Kullanıcı argümansız çağırdığında derslerin isimlerini listeler
+        mesaj = (
+            "<b>Kullanım:</b> <code>/devamsizlik_sil [Ders Adı]</code>\n"
+            "Örnek: <code>/devamsizlik_sil Matematik 2</code>\n\n"
+            "<b>Geçerli Dersler:</b>\n"
+            "• Matematik 2\n"
+            "• Laboratuvar\n"
+            "• Fizik\n"
+            "• Linner Cebir\n"
+            "• Türkçe\n"
+            "• Tarih\n"
+            "• İngilizce\n"
+            "• Algoritma"
+        )
+        await update.message.reply_text(mesaj, parse_mode="HTML")
+        return
+
+    course_name = " ".join(context.args).strip()
+
+    # Giriş Uzunluğu Kontrolü
+    if len(course_name) > 50:
+        await update.message.reply_text(
+            "Ders adı en fazla 50 karakter uzunluğunda olabilir.",
+            parse_mode="HTML"
+        )
+        return
+
+    canonical_info = get_canonical_course(course_name)
+    if not canonical_info:
+        mesaj = (
+            f"<b>Hata:</b> Girdiğiniz ders adı (<code>{html.escape(course_name)}</code>) geçerli ders listesinde bulunamadı.\n"
+            "Lütfen girdiğiniz adı listedekilerden biri olacak şekilde kontrol edip tekrar deneyin.\n\n"
+            "<b>Geçerli Dersler:</b>\n"
+            "• Matematik 2\n"
+            "• Laboratuvar\n"
+            "• Fizik\n"
+            "• Linner Cebir\n"
+            "• Türkçe\n"
+            "• Tarih\n"
+            "• İngilizce\n"
+            "• Algoritma"
+        )
+        await update.message.reply_text(mesaj, parse_mode="HTML")
+        return
+
+    canonical_name, limit = canonical_info
+    user_id = update.effective_user.id
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        
+        # Öncelikle bu ders için devamsızlık kaydı var mı kontrol et
+        cur.execute(
+            "SELECT absent_count, max_limit FROM attendance WHERE user_id=? AND course_name=?",
+            (user_id, canonical_name)
+        )
+        row = cur.fetchone()
+        
+        if not row:
+            await update.message.reply_text(
+                f"<b>{html.escape(canonical_name)}</b> dersi için zaten kayıtlı bir devamsızlığınız bulunmamaktadır.",
+                parse_mode="HTML"
+            )
+            return
+            
+        absent_count, max_limit = row
+        
+        if absent_count <= 0:
+            await update.message.reply_text(
+                f"<b>{html.escape(canonical_name)}</b> dersi devamsızlığınız zaten 0 gündür, daha fazla azaltılamaz.",
+                parse_mode="HTML"
+            )
+            return
+            
+        new_count = absent_count - 1
+        
+        cur.execute(
+            "UPDATE attendance SET absent_count=? WHERE user_id=? AND course_name=?",
+            (new_count, user_id, canonical_name)
         )
         conn.commit()
 
-    logger.info("Veritabanı başarıyla kuruldu / doğrulandı.")
-
-
-# ──────────────────────────────────────────────
-# Komut İşleyicileri (Handlers)
-# ──────────────────────────────────────────────
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /start — Kullanıcıyı selamlar ve tüm komutları listeler.
-    """
-    welcome_text = (
-        "👋 *Merhaba! Öğrenci Asistanı Bot'a hoş geldin!*\n\n"
-        "Kullanabileceğin komutlar:\n\n"
-        "📅 /takvim — Akademik takvimi görüntüle\n\n"
-        "📝 *Devamsızlık:*\n"
-        "  • /devamsizlik\\_ekle `[Ders Adı]` — Devamsızlık ekle\n"
-        "  • /devamsizlik\\_durum — Devamsızlık durumunu gör\n\n"
-        "🎓 *Notlar:*\n"
-        "  • /not\\_ekle `[Ders Adı] [Vize] [Final]` — Not ekle/güncelle\n"
-        "  • /not\\_durum — Not durumunu ve ortalamaları gör\n\n"
-        "📚 *Materyal Arşivi:*\n"
-        "  • /arsiv\\_ekle `[Ders Adı] [Link/İçerik]` — Materyal kaydet\n"
-        "  • /arsiv\\_getir — Kayıtlı materyalleri listele\n"
-    )
-    await update.message.reply_text(welcome_text, parse_mode="Markdown")
-    logger.info("Kullanıcı %s /start komutunu kullandı.", update.effective_user.id)
-
-
-# Türkçe gün adları için yardımcı sözlük
-GUN_ADLARI = {
-    "Monday": "Pazartesi",
-    "Tuesday": "Salı",
-    "Wednesday": "Çarşamba",
-    "Thursday": "Perşembe",
-    "Friday": "Cuma",
-    "Saturday": "Cumartesi",
-    "Sunday": "Pazar",
-}
-
-# Türkçe ay adları
-AY_ADLARI = {
-    1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan",
-    5: "Mayıs", 6: "Haziran", 7: "Temmuz", 8: "Ağustos",
-    9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık",
-}
-
-
-def format_tarih(date_str: str) -> str:
-    """'2026-01-05' → '5 Ocak 2026, Pazartesi' formatına çevirir."""
-    from datetime import datetime
-    dt = datetime.strptime(date_str, "%Y-%m-%d")
-    gun_adi = GUN_ADLARI.get(dt.strftime("%A"), "")
-    ay_adi = AY_ADLARI.get(dt.month, "")
-    return f"{dt.day} {ay_adi} {dt.year}, {gun_adi}"
-
-
-async def takvim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /takvim — Akademik takvimi dönem bazlı gruplandırarak listeler.
-    """
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT semester, emoji, event_name, event_date FROM calendar ORDER BY event_date ASC"
+    esc_course = html.escape(canonical_name)
+    
+    if max_limit >= 999:
+        mesaj = (
+            f"<b>{esc_course}</b> dersi devamsızlığınız 1 azaltıldı.\n"
+            f"Yeni Durum: {new_count} / Sınırsız (Hoca bakmıyor)"
         )
-        rows = cursor.fetchall()
-
-    if not rows:
-        await update.message.reply_text("📅 Takvimde herhangi bir etkinlik bulunamadı.")
-        return
-
-    # Dönem bazlı grupla
-    semesters: dict[str, list] = {}
-    for semester, emoji, event_name, event_date in rows:
-        if semester not in semesters:
-            semesters[semester] = []
-        semesters[semester].append((emoji, event_name, event_date))
-
-    # Her dönem için ayrı mesaj gönder (Telegram mesaj uzunluk limiti)
-    for semester_name, events in semesters.items():
-        # Dönem başlığı emoji
-        if "GÜZ" in semester_name:
-            header_emoji = "🍁"
-        elif "YAZ" in semester_name:
-            header_emoji = "☀️"
-        else:
-            header_emoji = "🌸"
-        lines = [f"{header_emoji} {semester_name}\n"]
-
-        for emoji, event_name, event_date in events:
-            tarih = format_tarih(event_date)
-            lines.append(f"• {tarih}")
-            lines.append(f"  L {emoji} {event_name}\n")
-
-        await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
-
-async def devamsizlik_ekle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /devamsizlik_ekle [Ders Adı]
-    Verilen ders yoksa 1 devamsızlıkla oluşturur. Varsa sayacı 1 artırır.
-    Sınır aşıldıysa uyarı verir.
-    """
-    if not context.args:
-        await update.message.reply_text(
-            "⚠️ Kullanım: /devamsizlik_ekle [Ders Adı]\n"
-            "Örnek: /devamsizlik_ekle Matematik"
+    else:
+        mesaj = (
+            f"<b>{esc_course}</b> dersi devamsızlığınız 1 azaltıldı.\n"
+            f"Yeni Durum: {new_count} / {max_limit}"
         )
-        return
-
-    user_id = update.effective_user.id
-    course_name = " ".join(context.args)
-
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-
-        # Mevcut kaydı kontrol et
-        cursor.execute(
-            "SELECT absent_count, max_limit FROM attendance WHERE user_id = ? AND course_name = ?",
-            (user_id, course_name),
-        )
-        row = cursor.fetchone()
-
-        if row is None:
-            # Yeni ders kaydı oluştur (1 devamsızlıkla)
-            cursor.execute(
-                "INSERT INTO attendance (user_id, course_name, absent_count) VALUES (?, ?, 1)",
-                (user_id, course_name),
-            )
-            conn.commit()
-            await update.message.reply_text(
-                f"✅ *{course_name}* dersi eklendi. Devamsızlık: 1/4",
-                parse_mode="Markdown",
-            )
-        else:
-            absent_count = row[0] + 1
-            max_limit = row[1]
-
-            cursor.execute(
-                "UPDATE attendance SET absent_count = ? WHERE user_id = ? AND course_name = ?",
-                (absent_count, user_id, course_name),
-            )
-            conn.commit()
-
-            msg = f"✅ *{course_name}* — Devamsızlık: {absent_count}/{max_limit}"
-
-            if absent_count >= max_limit:
-                msg += "\n\n⚠️ *DİKKAT: Devamsızlık sınırına ulaştınız veya aştınız!*"
-
-            await update.message.reply_text(msg, parse_mode="Markdown")
-
-    logger.info(
-        "Kullanıcı %s, '%s' dersine devamsızlık ekledi.", user_id, course_name
-    )
+        
+    await update.message.reply_text(mesaj, parse_mode="HTML")
 
 
-async def devamsizlik_durum(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /devamsizlik_durum — Kullanıcının tüm devamsızlıklarını listeler.
-    """
-    user_id = update.effective_user.id
-
-    with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT course_name, absent_count, max_limit FROM attendance WHERE user_id = ?",
-            (user_id,),
-        )
-        rows = cursor.fetchall()
-
-    if not rows:
-        await update.message.reply_text("📋 Henüz kayıtlı devamsızlık bulunamadı.")
-        return
-
-    lines = ["📋 *Devamsızlık Durumun:*\n"]
-    for course_name, absent_count, max_limit in rows:
-        status = "⚠️" if absent_count >= max_limit else "✅"
-        lines.append(f"  {status} *{course_name}:* {absent_count}/{max_limit}")
-
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
-
-
-async def not_ekle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /not_ekle [Ders Adı] [Vize] [Final]
-    Son iki argüman vize ve final notudur; geri kalanı ders adıdır.
-    Upsert mantığıyla çalışır.
-    """
+async def cmd_not_ekle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/not_ekle [Ders Adı] [Vize] [Final] — Not ekler veya günceller."""
     if not context.args or len(context.args) < 3:
         await update.message.reply_text(
             "⚠️ Kullanım: /not_ekle [Ders Adı] [Vize] [Final]\n"
-            "Örnek: /not_ekle Algoritma Analizi 50 60"
+            "Örnek: /not_ekle Matematik 70 85",
+            parse_mode="HTML"
+        )
+        return
+
+    args = context.args
+
+    # Son iki argüman notlar, geri kalanı ders adı
+    try:
+        final_notu = float(args[-1])
+        vize_notu = float(args[-2])
+    except ValueError:
+        await update.message.reply_text(
+            "❌ Vize ve Final değerleri sayı olmalıdır.\n"
+            "Örnek: /not_ekle Matematik 70 85",
+            parse_mode="HTML"
+        )
+        return
+
+    # Geçerli not aralığı kontrolü
+    if not (0 <= vize_notu <= 100 and 0 <= final_notu <= 100):
+        await update.message.reply_text("❌ Notlar 0 ile 100 arasında olmalıdır.", parse_mode="HTML")
+        return
+
+    course_name = " ".join(args[:-2]).strip()
+    if not course_name:
+        await update.message.reply_text("❌ Ders adı boş olamaz.", parse_mode="HTML")
+        return
+
+    # Giriş Uzunluğu Kontrolü
+    if len(course_name) > 50:
+        await update.message.reply_text(
+            "⚠️ Ders adı en fazla 50 karakter uzunluğunda olabilir.",
+            parse_mode="HTML"
         )
         return
 
     user_id = update.effective_user.id
 
-    # Son iki eleman notlar, geri kalanı ders adı
-    course_name = " ".join(context.args[:-2])
-    raw_midterm = context.args[-2]
-    raw_final = context.args[-1]
-
-    # Ders adı boş kalmamalı
-    if not course_name.strip():
-        await update.message.reply_text(
-            "⚠️ Ders adı belirtilmedi.\n"
-            "Kullanım: /not_ekle [Ders Adı] [Vize] [Final]"
-        )
-        return
-
-    # Sayısal doğrulama
-    try:
-        midterm = float(raw_midterm)
-        final = float(raw_final)
-    except ValueError:
-        await update.message.reply_text(
-            "⚠️ Vize ve Final değerleri sayı olmalıdır.\n"
-            "Örnek: /not_ekle Matematik 70 85"
-        )
-        return
-
     with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        # ON CONFLICT DO UPDATE — Upsert
-        cursor.execute(
-            """
+        cur = conn.cursor()
+        cur.execute("""
             INSERT INTO grades (user_id, course_name, midterm, final)
             VALUES (?, ?, ?, ?)
             ON CONFLICT(user_id, course_name)
-            DO UPDATE SET midterm = excluded.midterm, final = excluded.final
-            """,
-            (user_id, course_name, midterm, final),
-        )
+            DO UPDATE SET midterm = excluded.midterm,
+                          final   = excluded.final
+        """, (user_id, course_name, vize_notu, final_notu))
         conn.commit()
 
+    esc_course = html.escape(course_name)
     await update.message.reply_text(
-        f"✅ *{course_name}* notları kaydedildi:\n"
-        f"  • Vize: {midterm}\n"
-        f"  • Final: {final}",
-        parse_mode="Markdown",
-    )
-    logger.info(
-        "Kullanıcı %s, '%s' dersine not ekledi (Vize: %s, Final: %s).",
-        user_id, course_name, midterm, final,
+        f"✅ <b>{esc_course}</b> dersi notları kaydedildi.\n"
+        f"Vize: {vize_notu}  |  Final: {final_notu}",
+        parse_mode="HTML",
     )
 
 
-async def not_durum(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /not_durum — Kullanıcının tüm notlarını ve ortalamalarını listeler.
-    Ortalama = (Vize × 0.4) + (Final × 0.6). >= 50 ise Geçti ✅, değilse Kaldı ❌.
-    """
+async def cmd_not_durum(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/not_durum — Notları ve geçme durumunu listeler."""
     user_id = update.effective_user.id
 
     with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT course_name, midterm, final FROM grades WHERE user_id = ?",
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT course_name, midterm, final FROM grades WHERE user_id=? ORDER BY course_name",
             (user_id,),
         )
-        rows = cursor.fetchall()
+        rows = cur.fetchall()
 
     if not rows:
-        await update.message.reply_text("📋 Henüz kayıtlı not bulunamadı.")
+        await update.message.reply_text("📝 Henüz not kaydın bulunmuyor.")
         return
 
-    lines = ["🎓 *Not Durumun:*\n"]
+    satirlar = ["📝 <b>Not Durumu</b>\n"]
     for course_name, midterm, final in rows:
-        average = (midterm * 0.4) + (final * 0.6)
-        status = "Geçti ✅" if average >= 50 else "Kaldı ❌"
-        lines.append(
-            f"  📘 *{course_name}*\n"
-            f"      Vize: {midterm} | Final: {final} | "
-            f"Ort: {average:.1f} — {status}"
+        esc_course = html.escape(course_name)
+        if midterm is None or final is None:
+            satirlar.append(f"<b>{esc_course}</b>\n  Henüz not girilmemiş.")
+            continue
+        ortalama = (midterm * 0.4) + (final * 0.6)
+        sonuc = "Geçti ✅" if ortalama >= 50 else "Kaldı ❌"
+        satirlar.append(
+            f"<b>{esc_course}</b>\n"
+            f"  Vize: {midterm:.1f}  |  Final: {final:.1f}  |  Ort: {ortalama:.1f}  →  {sonuc}"
         )
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n\n".join(satirlar), parse_mode="HTML")
 
 
-async def arsiv_ekle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /arsiv_ekle [Ders Adı] [Link/İçerik]
-    İlk kelime ders adı, geri kalanı içerik/link olarak kaydedilir.
-    Birden fazla kelimelik ders adları için ders adını tek kelime tutmak ya da
-    tırnak kullanmak gereklidir — burada basitlik adına ilk kelime ders adıdır.
-    """
+async def cmd_arsiv_ekle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/arsiv_ekle [Ders Adı] [Link/İçerik] — Materyal kaydeder."""
     if not context.args or len(context.args) < 2:
         await update.message.reply_text(
             "⚠️ Kullanım: /arsiv_ekle [Ders Adı] [Link veya İçerik]\n"
-            "Örnek: /arsiv_ekle Matematik https://ornek.com/notlar.pdf"
+            "Örnek: /arsiv_ekle Matematik https://example.com/notlar",
+            parse_mode="HTML"
+        )
+        return
+
+    course_name = context.args[0].strip()
+    link_or_text = " ".join(context.args[1:]).strip()
+
+    # Giriş Uzunluğu Kontrolleri
+    if len(course_name) > 50:
+        await update.message.reply_text(
+            "⚠️ Ders adı en fazla 50 karakter uzunluğunda olabilir.",
+            parse_mode="HTML"
+        )
+        return
+
+    if len(link_or_text) > 500:
+        await update.message.reply_text(
+            "⚠️ İçerik veya Link en fazla 500 karakter uzunluğunda olabilir.",
+            parse_mode="HTML"
         )
         return
 
     user_id = update.effective_user.id
-    course_name = context.args[0]
-    link_or_text = " ".join(context.args[1:])
 
     with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
+        cur = conn.cursor()
+        cur.execute(
             "INSERT INTO materials (user_id, course_name, link_or_text) VALUES (?, ?, ?)",
             (user_id, course_name, link_or_text),
         )
         conn.commit()
 
+    esc_course = html.escape(course_name)
     await update.message.reply_text(
-        f"✅ *{course_name}* dersine materyal eklendi:\n  {link_or_text}",
-        parse_mode="Markdown",
+        f"✅ <b>{esc_course}</b> dersi için materyal kaydedildi.",
+        parse_mode="HTML",
     )
-    logger.info("Kullanıcı %s, '%s' dersine materyal ekledi.", user_id, course_name)
 
 
-async def arsiv_getir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """
-    /arsiv_getir — Kullanıcının kayıtlı materyallerini listeler.
-    """
+async def cmd_arsiv_getir(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/arsiv_getir — Kayıtlı materyalleri listeler."""
     user_id = update.effective_user.id
 
     with sqlite3.connect(DB_NAME) as conn:
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT course_name, link_or_text FROM materials WHERE user_id = ?",
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT course_name, link_or_text FROM materials WHERE user_id=? ORDER BY course_name",
             (user_id,),
         )
-        rows = cursor.fetchall()
+        rows = cur.fetchall()
 
     if not rows:
-        await update.message.reply_text("📚 Henüz kayıtlı materyal bulunamadı.")
+        await update.message.reply_text("📁 Henüz materyal kaydın bulunmuyor.")
         return
 
-    lines = ["📚 *Materyal Arşivin:*\n"]
-    for course_name, link_or_text in rows:
-        lines.append(f"  📘 *{course_name}:* {link_or_text}")
+    satirlar = ["📁 <b>Materyal Arşivi</b>\n"]
+    for i, (course_name, link_or_text) in enumerate(rows, start=1):
+        esc_course = html.escape(course_name)
+        esc_content = html.escape(link_or_text)
+        satirlar.append(f"{i}. <b>{esc_course}</b>\n   {esc_content}")
 
-    await update.message.reply_text("\n".join(lines), parse_mode="Markdown")
+    await update.message.reply_text("\n\n".join(satirlar), parse_mode="HTML")
 
 
-# ──────────────────────────────────────────────
-# Ana Giriş Noktası
-# ──────────────────────────────────────────────
+async def cmd_verilerimi_sil(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """/verilerimi_sil — Kullanıcının tüm verilerini siler (KVKK uyumluluğu)."""
+    user_id = update.effective_user.id
+
+    with sqlite3.connect(DB_NAME) as conn:
+        cur = conn.cursor()
+        # Üç tablodan da kullanıcının kayıtlarını sil
+        cur.execute("DELETE FROM attendance WHERE user_id=?", (user_id,))
+        cur.execute("DELETE FROM grades WHERE user_id=?", (user_id,))
+        cur.execute("DELETE FROM materials WHERE user_id=?", (user_id,))
+        conn.commit()
+
+    mesaj = (
+        "🗑️ <b>Verileriniz Başarıyla Silindi</b>\n\n"
+        "Kişisel Verilerin Korunması Kanunu (KVKK) uyumluluğu kapsamında, "
+        "öğrenci asistanı botu veritabanında adınıza kayıtlı olan tüm not, "
+        "devamsızlık ve materyal arşivi verileri sistemden <b>kalıcı olarak silinmiştir</b>."
+    )
+    await update.message.reply_text(mesaj, parse_mode="HTML")
+
+
+# ---------------------------------------------------------------------------
+# Asenkron Başlatıcı Kancası (Telegram / Menü komutlarını tescil eder)
+# ---------------------------------------------------------------------------
+
+async def post_init(application: Application) -> None:
+    """Uygulama başlatılırken Telegram üzerindeki / menüsü komutlarını kaydeder."""
+    commands = [
+        BotCommand("start", "Karşılama mesajı ve komut rehberi"),
+        BotCommand("takvim", "Akademik takvimi listeler"),
+        BotCommand("duyurular", "Resmi son 20 canlı BSM duyurusunu listeler"),
+        BotCommand("devamsizlik_ekle", "Ders adı girerek devamsızlık ekler"),
+        BotCommand("devamsizlik_sil", "Ders devamsızlık sayısını 1 azaltır"),
+        BotCommand("devamsizlik_durum", "Mevcut devamsızlık durumunu gösterir"),
+        BotCommand("not_ekle", "Ders notlarını ekler/günceller"),
+        BotCommand("not_durum", "Notlarınızı ve geçme durumunu listeler"),
+        BotCommand("arsiv_ekle", "Derse ait materyal/link arşivler"),
+        BotCommand("arsiv_getir", "Kayıtlı materyal arşivini listeler"),
+        BotCommand("verilerimi_sil", "Tüm bot verilerinizi kalıcı olarak siler (KVKK)")
+    ]
+    await application.bot.set_my_commands(commands)
+    logger.info("Telegram / menü komutları başarıyla tescil edildi.")
+
+
+# ---------------------------------------------------------------------------
+# Uygulama Giriş Noktası
+# ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Botu başlatır."""
-    # Token kontrolü
     if not BOT_TOKEN:
         logger.critical(
-            "BOT_TOKEN ortam değişkeni bulunamadı! "
-            "Lütfen 'BOT_TOKEN' ortam değişkenini ayarlayın."
+            "BOT_TOKEN ortam değişkeni ayarlanmamış! "
+            "Örnek: export BOT_TOKEN='123456:ABC-DEF...'"
         )
-        raise SystemExit("BOT_TOKEN ortam değişkeni tanımlı değil.")
+        raise SystemExit(1)
 
-    # Veritabanını kur
+    # Veritabanını başlat
     setup_database()
 
-    # Application oluştur
-    application = Application.builder().token(BOT_TOKEN).build()
+    # Uygulamayı oluştur (post_init kancası ile)
+    app = Application.builder().token(BOT_TOKEN).post_init(post_init).build()
 
-    # Komut handler'larını kaydet
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("takvim", takvim))
-    application.add_handler(CommandHandler("devamsizlik_ekle", devamsizlik_ekle))
-    application.add_handler(CommandHandler("devamsizlik_durum", devamsizlik_durum))
-    application.add_handler(CommandHandler("not_ekle", not_ekle))
-    application.add_handler(CommandHandler("not_durum", not_durum))
-    application.add_handler(CommandHandler("arsiv_ekle", arsiv_ekle))
-    application.add_handler(CommandHandler("arsiv_getir", arsiv_getir))
+    # Komut işleyicilerini kaydet
+    app.add_handler(CommandHandler("start",               cmd_start))
+    app.add_handler(CommandHandler("takvim",              cmd_takvim))
+    app.add_handler(CommandHandler("duyurular",           cmd_duyurular))
+    app.add_handler(CommandHandler("devamsizlik_ekle",    cmd_devamsizlik_ekle))
+    app.add_handler(CommandHandler("devamsizlik_sil",     cmd_devamsizlik_sil))
+    app.add_handler(CommandHandler("devamsizlik_durum",   cmd_devamsizlik_durum))
+    app.add_handler(CommandHandler("not_ekle",            cmd_not_ekle))
+    app.add_handler(CommandHandler("not_durum",           cmd_not_durum))
+    app.add_handler(CommandHandler("arsiv_ekle",          cmd_arsiv_ekle))
+    app.add_handler(CommandHandler("arsiv_getir",         cmd_arsiv_getir))
+    app.add_handler(CommandHandler("verilerimi_sil",      cmd_verilerimi_sil))
 
-    logger.info("Bot başlatılıyor...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Bot başlatılıyor... (Ctrl+C ile durdur)")
+    app.run_polling(allowed_updates=Update.ALL_TYPES)
 
 
 if __name__ == "__main__":
