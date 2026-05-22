@@ -13,6 +13,7 @@ import time
 import urllib.request
 import json
 import datetime
+import asyncio
 
 from telegram import Update, BotCommand
 from telegram.ext import Application, CommandHandler, ContextTypes
@@ -306,7 +307,8 @@ async def cmd_duyurular(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """/duyurular — KOÜ BSM resmi sitesindeki güncel son 20 duyuruyu listeler."""
     await update.message.reply_chat_action("typing")
     
-    duyurular = fetch_live_announcements()
+    # Asenkron event-loop'un ağ istekleriyle kilitlenmesini engellemek için to_thread kullanıyoruz
+    duyurular = await asyncio.to_thread(fetch_live_announcements)
     
     if duyurular is None:
         await update.message.reply_text(
@@ -358,7 +360,7 @@ def get_canonical_course(course_name: str) -> tuple[str, int] | None:
     elif normalized in ["laboratuvar", "lab"]:
         return "Laboratuvar", 3
     elif normalized in ["lineer cebir", "algebra"]:
-        return "Linner Cebir", 999
+        return "Lineer Cebir", 999
     elif normalized in ["türkçe", "turkish"]:
         return "Türkçe", 999    
     elif normalized in ["tarih", "history"]:
@@ -382,7 +384,7 @@ async def cmd_devamsizlik_ekle(update: Update, context: ContextTypes.DEFAULT_TYP
             "• <b>Matematik 2</b> — Limit: 4 Hak\n"
             "• <b>Laboratuvar</b> — Limit: 3 Hak\n"
             "• <b>Fizik</b> — Hoca devamsızlığı önemsemiyor\n"
-            "• <b>Linner Cebir</b> — Hoca devamsızlığı önemsemiyor\n"
+            "• <b>Lineer Cebir</b> — Hoca devamsızlığı önemsemiyor\n"
             "• <b>Türkçe</b> — Hoca devamsızlığı önemsemiyor\n"
             "• <b>Tarih</b> — Hoca devamsızlığı önemsemiyor\n"
             "• <b>İngilizce</b> — Hoca devamsızlığı önemsemiyor\n"
@@ -410,7 +412,7 @@ async def cmd_devamsizlik_ekle(update: Update, context: ContextTypes.DEFAULT_TYP
             "• Matematik 2\n"
             "• Laboratuvar\n"
             "• Fizik\n"
-            "• Linner Cebir\n"
+            "• Lineer Cebir\n"
             "• Türkçe\n"
             "• Tarih\n"
             "• İngilizce\n"
@@ -501,7 +503,7 @@ async def cmd_devamsizlik_sil(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• Matematik 2\n"
             "• Laboratuvar\n"
             "• Fizik\n"
-            "• Linner Cebir\n"
+            "• Lineer Cebir\n"
             "• Türkçe\n"
             "• Tarih\n"
             "• İngilizce\n"
@@ -529,7 +531,7 @@ async def cmd_devamsizlik_sil(update: Update, context: ContextTypes.DEFAULT_TYPE
             "• Matematik 2\n"
             "• Laboratuvar\n"
             "• Fizik\n"
-            "• Linner Cebir\n"
+            "• Lineer Cebir\n"
             "• Türkçe\n"
             "• Tarih\n"
             "• İngilizce\n"
