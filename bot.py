@@ -97,37 +97,49 @@ def setup_database() -> None:
 
         # Kapsamlı akademik takvim verileri (KOÜ 2025-2026)
         sample_events = [
-            # ── GÜZ YARIYILI ──
-            ("GÜZ YARIYILI (2025-2026)", "📚", "Güz Dönemi Derslerin Başlangıcı", "2025-09-15"),
-            ("GÜZ YARIYILI (2025-2026)", "🌙", "Kurban Bayramı Tatili (Resmi Tatil)", "2025-10-01"),
-            ("GÜZ YARIYILI (2025-2026)", "🎌", "29 Ekim Cumhuriyet Bayramı (Resmi Tatil)", "2025-10-29"),
-            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Ara Sınavları (Vizeler) Başlangıcı", "2025-11-10"),
+            # ── 🍁 GÜZ YARIYILI ──
+            ("GÜZ YARIYILI (2025-2026)", "🍁", "Güz Dönemi Katkı Payı ve Harç Ücreti Ödemeleri Başlangıcı", "2025-09-08"),
+            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Kayıt Yenileme ve Derse Yazılma Başlangıcı", "2025-09-08"),
+            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Kayıt Yenileme ve Derse Yazılma Sonu", "2025-09-10"),
+            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Ders Ekleme/Bırakma ve Danışman Onayları Başlangıcı", "2025-09-11"),
+            ("GÜZ YARIYILI (2025-2026)", "🏫", "Güz Dönemi Derslerin Başlangıcı", "2025-09-15"),
+            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Ders Ekleme/Bırakma ve Danışman Onayları Sonu", "2025-09-19"),
+            ("GÜZ YARIYILI (2025-2026)", "🇹🇷", "Cumhuriyet Bayramı (Resmi Tatil - 1.5 Gün)", "2025-10-29"),
+            ("GÜZ YARIYILI (2025-2026)", "🎗️", "Atatürk'ü Anma Günü Törenleri", "2025-11-10"),
+            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Ara Sınavları (Vizeler) Başlangıcı", "2025-11-17"),
             ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Ara Sınavları (Vizeler) Sonu", "2025-11-21"),
-            ("GÜZ YARIYILI (2025-2026)", "📚", "Güz Dönemi Derslerinin Sonu", "2026-01-02"),
+            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Mazeret Sınavları Başlangıcı", "2025-12-22"),
+            ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Mazeret Sınavları Sonu", "2025-12-26"),
+            ("GÜZ YARIYILI (2025-2026)", "🎉", "Yılbaşı Tatili (Resmi Tatil - 1 Gün)", "2026-01-01"),
+            ("GÜZ YARIYILI (2025-2026)", "🏫", "Güz Dönemi Derslerinin Sonu", "2026-01-02"),
             ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Yarıyıl Sonu Sınavları (Finaller) Başlangıcı", "2026-01-05"),
             ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Yarıyıl Sonu Sınavları (Finaller) Sonu", "2026-01-16"),
-            ("GÜZ YARIYILI (2025-2026)", "🖥", "Güz Dönemi Not Girişlerinin Son Günü (ÖBS Sürümü)", "2026-01-20"),
+            ("GÜZ YARIYILI (2025-2026)", "💾", "Güz Dönemi Not Girişlerinin Son Günü (ÖBS Sürümü)", "2026-01-20"),
             ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Bütünleme Sınavları Başlangıcı", "2026-01-26"),
-            ("GÜZ YARIYILI (2025-2026)", "🎒", "Bahar Dönemi Yatay Geçiş Başvurularının Başlaması", "2026-01-26"),
+            ("GÜZ YARIYILI (2025-2026)", "💼", "Bahar Dönemi Yatay Geçiş Başvurularının Başlaması", "2026-01-26"),
             ("GÜZ YARIYILI (2025-2026)", "📝", "Güz Dönemi Bütünleme Sınavları Sonu", "2026-01-30"),
-            ("GÜZ YARIYILI (2025-2026)", "🎉", "Güz Dönemi Tek Ders Sınavı", "2026-02-05"),
-            # ── BAHAR YARIYILI ──
+            ("GÜZ YARIYILI (2025-2026)", "🎓", "Güz Dönemi Tek Ders Sınavı", "2026-02-05"),
+            # ── 🌸 BAHAR YARIYILI ──
             ("BAHAR YARIYILI (2025-2026)", "🌸", "Bahar Dönemi Kayıt Yenileme, Harç Yatırma ve Derse Yazılma Başlangıcı", "2026-02-09"),
-            ("BAHAR YARIYILI (2025-2026)", "🎉", "Bahar Dönemi Kayıt Yenileme ve Derse Yazılma Sonu", "2026-02-11"),
-            ("BAHAR YARIYILI (2025-2026)", "📚", "Bahar Dönemi Derslerin Başlangıcı", "2026-02-16"),
+            ("BAHAR YARIYILI (2025-2026)", "🎓", "Bahar Dönemi Kayıt Yenileme ve Derse Yazılma Sonu", "2026-02-11"),
+            ("BAHAR YARIYILI (2025-2026)", "🏫", "Bahar Dönemi Derslerin Başlangıcı", "2026-02-16"),
             ("BAHAR YARIYILI (2025-2026)", "🌙", "Ramazan Bayramı Tatili (Resmi Tatil - 3.5 Gün)", "2026-03-20"),
             ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Ara Sınavları (Vizeler) Başlangıcı", "2026-04-13"),
             ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Ara Sınavları (Vizeler) Sonu", "2026-04-17"),
-            ("BAHAR YARIYILI (2025-2026)", "🎌", "23 Nisan Ulusal Egemenlik ve Çocuk Bayramı (Resmi Tatil)", "2026-04-23"),
-            ("BAHAR YARIYILI (2025-2026)", "🎌", "1 Mayıs Emek ve Dayanışma Günü (Resmi Tatil)", "2026-05-01"),
-            ("BAHAR YARIYILI (2025-2026)", "🎌", "19 Mayıs Atatürk'ü Anma, Gençlik ve Spor Bayramı (Resmi Tatil)", "2026-05-19"),
-            ("BAHAR YARIYILI (2025-2026)", "📚", "Bahar Dönemi Derslerinin Sonu", "2026-05-29"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Başlangıcı", "2026-06-01"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Sonu", "2026-06-12"),
-            ("BAHAR YARIYILI (2025-2026)", "🖥", "Bahar Dönemi Not Girişlerinin Son Günü (ÖBS Sürümü)", "2026-06-16"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Bütünleme Sınavları Başlangıcı", "2026-06-22"),
-            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Bütünleme Sınavları Sonu", "2026-06-26"),
-            ("BAHAR YARIYILI (2025-2026)", "🎉", "Bahar Dönemi Tek Ders Sınavı", "2026-07-02"),
+            ("BAHAR YARIYILI (2025-2026)", "🇹🇷", "Ulusal Egemenlik ve Çocuk Bayramı (Resmi Tatil)", "2026-04-23"),
+            ("BAHAR YARIYILI (2025-2026)", "👷", "Emek ve Dayanışma Günü (Resmi Tatil)", "2026-05-01"),
+            ("BAHAR YARIYILI (2025-2026)", "🇹🇷", "Atatürk'ü Anma, Gençlik ve Spor Bayramı (Resmi Tatil)", "2026-05-19"),
+            ("BAHAR YARIYILI (2025-2026)", "🐏", "Kurban Bayramı Tatili (Resmi Tatil - 4.5 Gün)", "2026-05-27"),
+            ("BAHAR YARIYILI (2025-2026)", "🏫", "Bahar Dönemi Derslerinin Sonu", "2026-06-12"),
+            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Başlangıcı", "2026-06-15"),
+            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Yarıyıl Sonu Sınavları (Finaller) Sonu", "2026-06-24"),
+            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Bütünleme Sınavları Başlangıcı", "2026-07-02"),
+            ("BAHAR YARIYILI (2025-2026)", "📝", "Bahar Dönemi Bütünleme Sınavları Sonu", "2026-07-08"),
+            ("BAHAR YARIYILI (2025-2026)", "🇹🇷", "Demokrasi ve Milli Birlik Günü (Resmi Tatil)", "2026-07-15"),
+            ("BAHAR YARIYILI (2025-2026)", "🎓", "Bahar Dönemi Tek Ders Sınavı", "2026-07-15"),
+            # ── ☀️ YAZ OKULU DÖNEMİ ──
+            ("YAZ OKULU DÖNEMİ (2026)", "☀️", "Yaz Okulu Başvuruları ve Derse Yazılma Kayıtları Başlangıcı", "2026-07-20"),
+            ("YAZ OKULU DÖNEMİ (2026)", "🏫", "Yaz Okulu Derslerinin Başlangıcı", "2026-07-27"),
         ]
         cursor.executemany(
             "INSERT OR IGNORE INTO calendar (semester, emoji, event_name, event_date) VALUES (?, ?, ?, ?)",
@@ -217,8 +229,13 @@ async def takvim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Her dönem için ayrı mesaj gönder (Telegram mesaj uzunluk limiti)
     for semester_name, events in semesters.items():
         # Dönem başlığı emoji
-        header_emoji = "🍂" if "GÜZ" in semester_name else "🌸"
-        lines = [f"{header_emoji} *{semester_name}*\n"]
+        if "GÜZ" in semester_name:
+            header_emoji = "🍁"
+        elif "YAZ" in semester_name:
+            header_emoji = "☀️"
+        else:
+            header_emoji = "🌸"
+        lines = [f"{header_emoji} {semester_name}\n"]
 
         for emoji, event_name, event_date in events:
             tarih = format_tarih(event_date)
