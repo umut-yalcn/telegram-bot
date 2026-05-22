@@ -382,11 +382,11 @@ async def cmd_devamsizlik_ekle(update: Update, context: ContextTypes.DEFAULT_TYP
             "• <b>Matematik 2</b> — Limit: 4 Hak\n"
             "• <b>Laboratuvar</b> — Limit: 3 Hak\n"
             "• <b>Fizik</b> — Hoca devamsızlığı önemsemiyor\n"
-            "• <b>Linner Cebir</b> — Sınırsız (Hoca bakmıyor)\n"
-            "• <b>Türkçe</b> — Sınırsız (Hoca bakmıyor)\n"
-            "• <b>Tarih</b> — Sınırsız (Hoca bakmıyor)\n"
-            "• <b>İngilizce</b> — Sınırsız (Hoca bakmıyor)\n"
-            "• <b>Algoritma</b> — Sınırsız (Hoca bakmıyor)\n"
+            "• <b>Linner Cebir</b> — Hoca devamsızlığı önemsemiyor\n"
+            "• <b>Türkçe</b> — Hoca devamsızlığı önemsemiyor\n"
+            "• <b>Tarih</b> — Hoca devamsızlığı önemsemiyor\n"
+            "• <b>İngilizce</b> — Hoca devamsızlığı önemsemiyor\n"
+            "• <b>Algoritma</b> — Hoca devamsızlığı önemsemiyor\n"
         )
         await update.message.reply_text(mesaj, parse_mode="HTML")
         return
