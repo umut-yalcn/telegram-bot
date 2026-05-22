@@ -353,19 +353,19 @@ def get_canonical_course(course_name: str) -> tuple[str, int] | None:
     
     if normalized in ["fizik"]:
         return "Fizik", 999
-    elif normalized in ["matematik 2", "matematik"]:
+    elif normalized in ["matematik 2", "math"]:
         return "Matematik 2", 4
-    elif normalized in ["laboratuvar", "laboratuvar dersi", "lab"]:
+    elif normalized in ["laboratuvar", "lab"]:
         return "Laboratuvar", 3
-    elif normalized in ["lineer cebir", "linner cebir", "cebir", "linner cebir dersi"]:
+    elif normalized in ["lineer cebir", "algebra"]:
         return "Linner Cebir", 999
-    elif normalized in ["türkçe", "turkce", "türkçe dersi"]:
-        return "Türkçe", 999
-    elif normalized in ["tarih", "tarih dersi", "inkılap tarihi", "ata"]:
+    elif normalized in ["türkçe", "turkish"]:
+        return "Türkçe", 999    
+    elif normalized in ["tarih", "history"]:
         return "Tarih", 999
-    elif normalized in ["ingilizce", "ingilizce dersi", "english"]:
+    elif normalized in ["ingilizce", "english"]:
         return "İngilizce", 999
-    elif normalized in ["algoritma", "algoritma dersi", "algoritmalar"]:
+    elif normalized in ["algoritma", "algorithm"]:
         return "Algoritma", 999
     else:
         return None
@@ -381,7 +381,7 @@ async def cmd_devamsizlik_ekle(update: Update, context: ContextTypes.DEFAULT_TYP
             "<b>Ders Listesi ve Devamsızlık Limitleri:</b>\n"
             "• <b>Matematik 2</b> — Limit: 4 Hak\n"
             "• <b>Laboratuvar</b> — Limit: 3 Hak\n"
-            "• <b>Fizik</b> — Sınırsız (Hoca bakmıyor)\n"
+            "• <b>Fizik</b> — Hoca devamsızlığı önemsemiyor\n"
             "• <b>Linner Cebir</b> — Sınırsız (Hoca bakmıyor)\n"
             "• <b>Türkçe</b> — Sınırsız (Hoca bakmıyor)\n"
             "• <b>Tarih</b> — Sınırsız (Hoca bakmıyor)\n"
