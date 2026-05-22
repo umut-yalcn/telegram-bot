@@ -236,7 +236,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """/start — Kullanıcıyı karşılar ve komutları listeler."""
     kullanici = html.escape(update.effective_user.first_name or "Öğrenci")
     mesaj = (
-        f"👋 Merhaba, <b>{kullanici}</b>! Ben Öğrenci Asistanı Botuyum.\n\n"
+        f"👋 Merhaba, <b>{kullanici}</b>! Ben Kocaeli Üniversitesi Bilişim Sistemleri Mühendisliği (BSM) Öğrenci Asistanı Botuyum.\n\n"
         "Kullanabileceğin komutlar:\n\n"
         "📅 <b>Akademik Takvim</b>\n"
         "  /takvim — Akademik etkinlikleri listeler.\n\n"
@@ -657,7 +657,7 @@ async def cmd_not_ekle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 
 
 async def cmd_not_durum(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """/not_durum — Notları ve geçme durumunu listeler."""
+    """/not_durum — Notları ve geçme durumunu KOÜ başarı standartlarına göre listeler."""
     user_id = update.effective_user.id
 
     with sqlite3.connect(DB_NAME) as conn:
@@ -672,17 +672,48 @@ async def cmd_not_durum(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         await update.message.reply_text("📝 Henüz not kaydın bulunmuyor.")
         return
 
-    satirlar = ["📝 <b>Not Durumu</b>\n"]
+    satirlar = ["📝 <b>KOÜ BSM Not Durumu</b>\n"]
     for course_name, midterm, final in rows:
         esc_course = html.escape(course_name)
         if midterm is None or final is None:
             satirlar.append(f"<b>{esc_course}</b>\n  Henüz not girilmemiş.")
             continue
+        
+        # KOÜ standart vize %40, final %60 başarı oranı hesaplama
         ortalama = (midterm * 0.4) + (final * 0.6)
-        sonuc = "Geçti ✅" if ortalama >= 50 else "Kaldı ❌"
+        
+        # KOÜ Resmi Başarı Notu ve Harf Notu Yönetmeliği Karşılıkları
+        if ortalama >= 90:
+            harf = "AA"
+            sonuc = "Geçti ✅"
+        elif ortalama >= 85:
+            harf = "BA"
+            sonuc = "Geçti ✅"
+        elif ortalama >= 80:
+            harf = "BB"
+            sonuc = "Geçti ✅"
+        elif ortalama >= 75:
+            harf = "CB"
+            sonuc = "Geçti ✅"
+        elif ortalama >= 65:
+            harf = "CC"
+            sonuc = "Geçti ✅"
+        elif ortalama >= 55:
+            harf = "DC"
+            sonuc = "Koşullu Başarılı ⚠️ (AGNO >= 2.00)"
+        elif ortalama >= 50:
+            harf = "DD"
+            sonuc = "Kaldı ❌ (KOÜ'de DD başarısız sayılır)"
+        elif ortalama >= 40:
+            harf = "FD"
+            sonuc = "Kaldı ❌"
+        else:
+            harf = "FF"
+            sonuc = "Kaldı ❌"
+            
         satirlar.append(
             f"<b>{esc_course}</b>\n"
-            f"  Vize: {midterm:.1f}  |  Final: {final:.1f}  |  Ort: {ortalama:.1f}  →  {sonuc}"
+            f"  Vize: {midterm:.1f}  |  Final: {final:.1f}  |  Ort: {ortalama:.1f} ({harf})  →  {sonuc}"
         )
 
     await update.message.reply_text("\n\n".join(satirlar), parse_mode="HTML")
